@@ -13,6 +13,21 @@ import argparse
 import numpy as np
 import pandas as pd
 import torch
+
+# Cross-version NumPy 1.x <-> 2.x compatibility for pickle
+try:
+    import numpy._core.numeric as _core_num
+except ImportError:
+    try:
+        import numpy.core.numeric as _core_num
+        import numpy.core as _core
+        sys.modules['numpy._core'] = _core
+        sys.modules['numpy._core.numeric'] = _core_num
+        if hasattr(_core, '_multiarray_umath'):
+            sys.modules['numpy._core._multiarray_umath'] = _core._multiarray_umath
+    except Exception:
+        pass
+
 from sklearn import metrics
 
 # Stage 1 modules

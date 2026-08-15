@@ -1,5 +1,22 @@
 import pickle
+import sys
 import numpy
+import numpy as np
+
+# Cross-version NumPy 1.x <-> 2.x compatibility for pickle
+try:
+    import numpy._core.numeric as _core_num
+except ImportError:
+    try:
+        import numpy.core.numeric as _core_num
+        import numpy.core as _core
+        sys.modules['numpy._core'] = _core
+        sys.modules['numpy._core.numeric'] = _core_num
+        if hasattr(_core, '_multiarray_umath'):
+            sys.modules['numpy._core._multiarray_umath'] = _core._multiarray_umath
+    except Exception:
+        pass
+
 try:
     import matplotlib.pyplot as plt
 except ImportError:

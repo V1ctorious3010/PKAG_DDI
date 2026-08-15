@@ -4,12 +4,28 @@ Prepares datasets for s0 (random), s1 (cold-start / unseen-seen), and s2 (scaffo
 """
 
 import os
+import sys
 import json
 import pickle
 import argparse
 import pandas as pd
 import numpy as np
 import torch
+
+# Cross-version NumPy 1.x <-> 2.x compatibility for pickle
+try:
+    import numpy._core.numeric as _core_num
+except ImportError:
+    try:
+        import numpy.core.numeric as _core_num
+        import numpy.core as _core
+        sys.modules['numpy._core'] = _core
+        sys.modules['numpy._core.numeric'] = _core_num
+        if hasattr(_core, '_multiarray_umath'):
+            sys.modules['numpy._core._multiarray_umath'] = _core._multiarray_umath
+    except Exception:
+        pass
+
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from torch_geometric.data import Data

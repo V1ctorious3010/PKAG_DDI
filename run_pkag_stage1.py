@@ -7,6 +7,7 @@ Supports splits:
 """
 
 import os
+import sys
 import math
 import json
 import time
@@ -17,6 +18,21 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Cross-version NumPy 1.x <-> 2.x compatibility for pickle
+try:
+    import numpy._core.numeric as _core_num
+except ImportError:
+    try:
+        import numpy.core.numeric as _core_num
+        import numpy.core as _core
+        sys.modules['numpy._core'] = _core
+        sys.modules['numpy._core.numeric'] = _core_num
+        if hasattr(_core, '_multiarray_umath'):
+            sys.modules['numpy._core._multiarray_umath'] = _core._multiarray_umath
+    except Exception:
+        pass
+
 from torch.nn import Parameter
 import torch.nn.init as init
 from torch.utils.data import Dataset, DataLoader, RandomSampler
@@ -238,13 +254,24 @@ def run_stage1_pipeline(
     # 1. Load mappings
     with open(f"{data_dir}/{dataset_name}/all_ddi_addSMIELS.pkl", "rb") as f:
         all_dict = pickle.load(f)
-    with open(f"{data_dir}/drug2fingerprint.pkl", "rb") as f:
-        drug2fp = pickle.load(f)
     with open(f"{data_dir}/retrieval/uni_function_list.pkl", "rb") as f:
         uni_functions = pickle.load(f)
 
     drug_smiles_df = pd.read_csv(f"{data_dir}/{dataset_name}/drug_smiles.csv")
     drug2smiles = {r["drug_id"]: r["smiles"] for _, r in drug_smiles_df.iterrows()}
+
+    # Compute or load fingerprints safely
+    drug2fp = None
+    if os.path.exists(f"{data_dir}/drug2fingerprint.pkl"):
+        try:
+            with open(f"{data_dir}/drug2fingerprint.pkl", "rb") as f:
+                drug2fp = pickle.load(f)
+        except Exception:
+            drug2fp = None
+
+    if drug2fp is None:
+        print(f"Generating Morgan fingerprints for {len(drug2smiles)} drugs...")
+        drug2fp = {d: get_morgan_fingerprint(smiles) for d, smiles in drug2smiles.items()}
 
     # 2. Get file paths
     if split_mode == "random":
