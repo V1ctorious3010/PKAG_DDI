@@ -204,8 +204,19 @@ def remove_element(lst, target):
             new = new+" "+i
     return new
 
-with open("./data/MecDDI/all_ddi_addSMIELS.pkl", 'rb') as f:
-    ALL_DICT = pickle.load(f)
+def load_all_dict(dataset_name="DrugBank"):
+    possible_paths = [
+        f"./data/{dataset_name}/all_ddi_addSMIELS.pkl",
+        "./data/DrugBank/all_ddi_addSMIELS.pkl",
+        "./data/MecDDI/all_ddi_addSMIELS.pkl",
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                return pickle.load(f)
+    return {}
+
+ALL_DICT = load_all_dict()
 
 def precess_mecddi_rawdata():
     # get the biological function pool
@@ -407,8 +418,37 @@ if __name__ == '__main__':
     parser.add_argument('--mode', help='train, val, or test')
     parser.add_argument('--fold', help='0,1,2')
     args = parser.parse_args()
-    if args.dataset == "mecddi":
+    if args.dataset.lower() in ["drugbank", "db"]:
+        dataset = "DrugBank"
+        global ALL_DICT
+        ALL_DICT = load_all_dict("DrugBank")
+        if args.split_mode == "random":
+            input_file = f"./data/{dataset}/random_split/{args.mode}_seed{args.fold}.txt"
+            output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"
+        elif args.split_mode == "cold":
+            if args.mode == "train":
+                input_file = f"./data/{dataset}/cold_split/fold{args.fold}/train.txt"
+                output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"
+            elif args.mode == "val":
+                input_file = f"./data/{dataset}/cold_split/fold{args.fold}/su.txt"
+                output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"
+            elif args.mode == "test":
+                input_file = f"./data/{dataset}/cold_split/fold{args.fold}/uu.txt"
+                output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"
+            else:
+                print("error")
+        elif args.split_mode == "scaffold":
+            if args.mode == "train":
+                input_file = f"./data/{dataset}/scaffold_split/train.txt"
+                output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"
+            else:
+                input_file = f"./data/{dataset}/scaffold_split/val.txt"
+                output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"
+        else:
+            print("error")
+    elif args.dataset == "mecddi":
         dataset = "MecDDI"
+        ALL_DICT = load_all_dict("MecDDI")
         if args.split_mode =="random":
             input_file = f"./data/{dataset}/random_split/{args.mode}_seed{args.fold}.txt"
             output_dir = f"./data/{dataset}_inputdata/{args.mode}_{args.split_mode}_split{args.fold}"

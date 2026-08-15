@@ -1,6 +1,10 @@
 import pickle
 import numpy
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+
 import pandas
 import os
 import re
@@ -11,7 +15,10 @@ import numpy as np
 from sklearn import metrics
 import random
 import torch
-from rouge_score import rouge_scorer
+try:
+    from rouge_score import rouge_scorer
+except ImportError:
+    rouge_scorer = None
 from tqdm import tqdm
 from os import path as osp
 
@@ -133,10 +140,36 @@ def make_label_vector(labels, num_classes):
         label_vector[i, label] = 1  
     return label_vector
 
-def results_metrics(prediction=None, target=None):
-    with open("./data/MecDDI/mechanism_des2id.pkl","rb") as f:
+def results_metrics(prediction=None, target=None, dataset_name="DrugBank", data_dir="./data"):
+    candidate_des_paths = [
+        os.path.join(data_dir, dataset_name, "mechanism_des2id.pkl"),
+        f"./data/{dataset_name}/mechanism_des2id.pkl",
+        f"./PKAG_DDI_repo/data/{dataset_name}/mechanism_des2id.pkl",
+        "./data/DrugBank/mechanism_des2id.pkl",
+        "./data/MecDDI/mechanism_des2id.pkl",
+    ]
+    candidate_id_paths = [
+        os.path.join(data_dir, dataset_name, "id2mechanism.pkl"),
+        f"./data/{dataset_name}/id2mechanism.pkl",
+        f"./PKAG_DDI_repo/data/{dataset_name}/id2mechanism.pkl",
+        "./data/DrugBank/id2mechanism.pkl",
+        "./data/MecDDI/id2mechanism.pkl",
+    ]
+
+    des_path = None
+    id_path = None
+    for p_des, p_id in zip(candidate_des_paths, candidate_id_paths):
+        if os.path.exists(p_des) and os.path.exists(p_id):
+            des_path = p_des
+            id_path = p_id
+            break
+
+    if des_path is None or id_path is None:
+        raise FileNotFoundError(f"Could not find mechanism_des2id.pkl in any candidate path: {candidate_des_paths}")
+
+    with open(des_path, "rb") as f:
         ddie2id = pickle.load(f)
-    with open("./data/MecDDI/id2mechanism.pkl","rb") as f:
+    with open(id_path, "rb") as f:
         id2ddie = pickle.load(f)
 
     all_ddie_descriptions = []
@@ -144,19 +177,24 @@ def results_metrics(prediction=None, target=None):
         all_ddie_descriptions.append(id2ddie[id])
     gt_all_ddie_num = len(all_ddie_descriptions)
 
-    all_text = all_ddie_descriptions+prediction
+    all_text = all_ddie_descriptions + prediction
     vectorizer = CountVectorizer()
     X = vectorizer.fit_transform(all_text)
-    cosine_sim = cosine_similarity(X, X) #[103+1050,103+1050]
-    pre = cosine_sim[gt_all_ddie_num:,:gt_all_ddie_num]
+    cosine_sim = cosine_similarity(X, X)
+    pre = cosine_sim[gt_all_ddie_num:, :gt_all_ddie_num]
     pred = np.argmax(pre, axis=1)
 
     gt_label = []
-    for p in target:     
-        id = ddie2id[p[:-1]]
-        gt_label.append(id)
+    for p in target:
+        cleaned = p.strip()
+        if cleaned in ddie2id:
+            gt_label.append(ddie2id[cleaned])
+        elif p[:-1] in ddie2id:
+            gt_label.append(ddie2id[p[:-1]])
+        else:
+            gt_label.append(0)
     gt_label = np.array(gt_label)
-    print("gt_label:",len(gt_label))
+    print("gt_label count:", len(gt_label))
     perfor = do_compute_metrics(pred, gt_label)
     print("performance:", perfor)
     return perfor

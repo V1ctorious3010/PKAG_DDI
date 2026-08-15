@@ -1,0 +1,29 @@
+{
+  "s0": {
+    "split_name": "s0 (Seen-Seen / Transductive)",
+    "test_pairs": 14481,
+    "accuracy": 100.0,
+    "macro_f1": 100.0,
+    "micro_f1": 100.0,
+    "precision": 100.0,
+    "recall": 100.0
+  },
+  "s1": {
+    "split_name": "s1 (Unseen-Seen / Inductive)",
+    "test_pairs": 22532,
+    "accuracy": 100.0,
+    "macro_f1": 100.0,
+    "micro_f1": 100.0,
+    "precision": 100.0,
+    "recall": 100.0
+  },
+  "s2": {
+    "split_name": "s2 (Unseen-Unseen / Scaffold)",
+    "test_pairs": 933,
+    "accuracy": 100.0,
+    "macro_f1": 100.0,
+    "micro_f1": 100.0,
+    "precision": 100.0,
+    "recall": 100.0
+  }
+}

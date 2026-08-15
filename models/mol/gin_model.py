@@ -3,11 +3,23 @@ from torch_geometric.nn import MessagePassing
 from torch_geometric.utils import add_self_loops, degree, softmax, to_dense_batch
 from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_pool, GlobalAttention, Set2Set, LayerNorm
 import torch.nn.functional as F
-from torch_scatter import scatter_add
+try:
+    from torch_scatter import scatter_add
+except ImportError:
+    try:
+        from torch_geometric.utils import scatter
+        def scatter_add(src, index, dim=0, dim_size=None):
+            return scatter(src, index, dim=dim, dim_size=dim_size, reduce="sum")
+    except Exception:
+        def scatter_add(src, index, dim=0, dim_size=None):
+            if dim_size is None:
+                dim_size = int(index.max()) + 1 if index.numel() > 0 else 0
+            out = torch.zeros(dim_size, *src.shape[1:], dtype=src.dtype, device=src.device)
+            return out.index_add_(dim, index, src)
+
 from torch_geometric.nn.inits import glorot, zeros
 from ogb.graphproppred.mol_encoder import AtomEncoder, BondEncoder
 from torch_geometric.utils import to_dense_batch
-from torch_scatter import scatter_add
 import inspect
 num_atom_type = 120  # including the extra mask tokens
 num_chirality_tag = 3
