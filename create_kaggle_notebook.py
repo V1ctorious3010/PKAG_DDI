@@ -1,8 +1,29 @@
 """
-Generates the complete, Kaggle-ready Jupyter Notebook pkag-ddi-drugbank.ipynb.
+Generates the complete, self-contained Kaggle-ready Jupyter Notebook pkag-ddi-drugbank.ipynb.
+Includes all helper scripts and configs directly so that it runs out-of-the-box on any Kaggle environment!
 """
 
 import json
+
+# Read local script contents to embed
+with open("PKAG_DDI_repo/prepare_drugbank_data.py", "r", encoding="utf-8") as f:
+    prepare_script_content = f.read()
+
+with open("PKAG_DDI_repo/run_pkag_stage1.py", "r", encoding="utf-8") as f:
+    stage1_script_content = f.read()
+
+with open("PKAG_DDI_repo/run_kaggle_pipeline.py", "r", encoding="utf-8") as f:
+    pipeline_script_content = f.read()
+
+with open("PKAG_DDI_repo/configs/final/drugbank_random0_ksquare.json", "r", encoding="utf-8") as f:
+    cfg_s0_content = f.read()
+
+with open("PKAG_DDI_repo/configs/final/drugbank_cold0_ksquare.json", "r", encoding="utf-8") as f:
+    cfg_s1_content = f.read()
+
+with open("PKAG_DDI_repo/configs/final/drugbank_scaffold_ksquare.json", "r", encoding="utf-8") as f:
+    cfg_s2_content = f.read()
+
 
 cells = []
 
@@ -37,26 +58,32 @@ cells.append({
     ]
 })
 
-# Cell 2: Dependencies
+# Cell 2: Dependencies Installation
 cells.append({
     "cell_type": "code",
     "execution_count": None,
     "metadata": {},
     "outputs": [],
     "source": [
-        "!pip install -r requirements.txt --quiet\n",
-        "!pip install torch-geometric ogb rdkit transformers pytorch-lightning peft deepspeed wandb --quiet\n"
+        "# Install required dependencies directly (no missing requirements.txt errors)\n",
+        "!pip install torch-geometric ogb rdkit transformers pytorch-lightning peft deepspeed wandb rouge_score salesforce-lavis --quiet\n"
     ]
 })
 
-# Cell 3: Local Package Installation
+# Cell 3: Local Package Setup
 cells.append({
     "cell_type": "code",
     "execution_count": None,
     "metadata": {},
     "outputs": [],
     "source": [
-        "!pip install -e . --quiet\n"
+        "import os, sys\n",
+        "if not os.path.exists(\"setup.py\"):\n",
+        "    with open(\"setup.py\", \"w\", encoding=\"utf-8\") as f:\n",
+        "        f.write(\"from setuptools import setup, find_packages\\nsetup(name='pkag_ddi', version='0.1.0', packages=find_packages())\\n\")\n",
+        "!pip install -e . --quiet\n",
+        "if os.getcwd() not in sys.path:\n",
+        "    sys.path.append(os.getcwd())\n"
     ]
 })
 
@@ -99,50 +126,42 @@ cells.append({
     ]
 })
 
-# Cell 5: YAML Configuration
+# Cell 5: Setup Scripts and Configurations
 cells.append({
     "cell_type": "code",
     "execution_count": None,
     "metadata": {},
     "outputs": [],
     "source": [
-        "%%writefile config/pkag_drugbank_config.yaml\n",
-        "output_dir: ../outputs\n",
-        "wandb:\n",
-        "  log: True\n",
-        "  entity: tunglamngo-univesity-of-engineering-and-technology-vnu\n",
-        "  project_name: DDI_NCKH_2025\n",
-        "  display_name: PKAG_DDI_DrugBank_s0_s1_s2\n",
+        "# Ensure all DrugBank configs and helper scripts exist\n",
+        "import os\n",
+        "os.makedirs(\"configs/final\", exist_ok=True)\n",
         "\n",
-        "dataset:\n",
-        "  symmetric: True\n",
-        "  dataset: drugbank\n",
-        "  settings: advanced\n",
-        "  root_dir: \"/kaggle/input/datasets/dattotien/pharmacokinetics-dataset/drugbank_cluster\"\n",
-        "  smiles_map_path: \"/kaggle/input/sample-data/drugbank_smiles_map.csv\"\n",
-        "  ddi_json_path: \"/kaggle/input/sample-data/drugbank.json\"\n",
-        "  id2graph_path: \"/kaggle/input/sample-data/modality/drugbank/id2graph.pt\"\n",
-        "  target_columns: [\"Interaction\"]\n",
-        "  num_classes: 86\n",
-        "  track_metric: macro_f1\n",
+        "# 1. Config s0\n",
+        "with open(\"configs/final/drugbank_random0_ksquare.json\", \"w\", encoding=\"utf-8\") as f:\n",
+        f"    f.write({repr(cfg_s0_content)})\n",
         "\n",
-        "stage1_pks:\n",
-        "  epochs: 15\n",
-        "  batch_size: 128\n",
-        "  learning_rate: 5.0e-4\n",
-        "  node_clusters: 80\n",
-        "  top_k: 2\n",
-        "  ratio: 0.9\n",
+        "# 2. Config s1\n",
+        "with open(\"configs/final/drugbank_cold0_ksquare.json\", \"w\", encoding=\"utf-8\") as f:\n",
+        f"    f.write({repr(cfg_s1_content)})\n",
         "\n",
-        "stage2_pkalm:\n",
-        "  opt_model: \"facebook/galactica-1.3b\"\n",
-        "  llm_tune: \"lora\"\n",
-        "  lora_r: 8\n",
-        "  lora_alpha: 32\n",
-        "  lora_dropout: 0.1\n",
-        "  batch_size: 4\n",
-        "  max_epochs: 30\n",
-        "  learning_rate: 1.0e-4\n"
+        "# 3. Config s2\n",
+        "with open(\"configs/final/drugbank_scaffold_ksquare.json\", \"w\", encoding=\"utf-8\") as f:\n",
+        f"    f.write({repr(cfg_s2_content)})\n",
+        "\n",
+        "# 4. Prepare DrugBank script\n",
+        "with open(\"prepare_drugbank_data.py\", \"w\", encoding=\"utf-8\") as f:\n",
+        f"    f.write({repr(prepare_script_content)})\n",
+        "\n",
+        "# 5. Stage 1 Runner script\n",
+        "with open(\"run_pkag_stage1.py\", \"w\", encoding=\"utf-8\") as f:\n",
+        f"    f.write({repr(stage1_script_content)})\n",
+        "\n",
+        "# 6. Full Pipeline Runner script\n",
+        "with open(\"run_kaggle_pipeline.py\", \"w\", encoding=\"utf-8\") as f:\n",
+        f"    f.write({repr(pipeline_script_content)})\n",
+        "\n",
+        "print(\"All DrugBank configs and runner scripts are ready!\")\n"
     ]
 })
 
@@ -253,4 +272,4 @@ notebook = {
 with open("e:/PKAG DDI/pkag-ddi-drugbank.ipynb", "w", encoding="utf-8") as f:
     json.dump(notebook, f, indent=1, ensure_ascii=False)
 
-print("Successfully generated e:/PKAG DDI/pkag-ddi-drugbank.ipynb with", len(cells), "cells.")
+print("Successfully generated self-contained e:/PKAG DDI/pkag-ddi-drugbank.ipynb with", len(cells), "cells.")
