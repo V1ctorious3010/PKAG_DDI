@@ -1,4 +1,4 @@
-from torch_geometric.data import Dataset
+from torch_geometric.data import Dataset, Data
 import os
 from torch_geometric.loader.dataloader import Collater
 import numpy as np
@@ -9,6 +9,21 @@ import pickle
 from torch_geometric.data import Batch
 import pandas as pd
 from itertools import chain
+from ogb.utils import smiles2graph
+
+
+def mol_to_graph_data_obj_simple(smiles: str) -> Data:
+    try:
+        g_dict = smiles2graph(smiles)
+        x = torch.tensor(g_dict["node_feat"], dtype=torch.long)
+        edge_index = torch.tensor(g_dict["edge_index"], dtype=torch.long)
+        edge_attr = torch.tensor(g_dict["edge_feat"], dtype=torch.long)
+        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+    except Exception:
+        x = torch.zeros((1, 9), dtype=torch.long)
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, 3), dtype=torch.long)
+        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 
 class RetrievalTwoStage_addgtfunction(Dataset):
@@ -25,10 +40,15 @@ class RetrievalTwoStage_addgtfunction(Dataset):
         self.mol_token_id = mol_token_id["mol"]
         self.collater = Collater([], [])
         self.retrieval_number = cfg["retrieval_function_number"]
-        self.add_gt = cfg["add_gt"]
+        self.add_gt = cfg.get("add_gt", False)
 
         ### retrieval index
         all_function_list_file = "data/retrieval/uni_function_list.pkl"
+        if not os.path.exists(all_function_list_file):
+            for cand in ["./data/retrieval/uni_function_list.pkl", "../data/retrieval/uni_function_list.pkl", "retrieval/uni_function_list.pkl"]:
+                if os.path.exists(cand):
+                    all_function_list_file = cand
+                    break
         with open(all_function_list_file, 'rb') as f:
             self.uni_function_list = pickle.load(f)
 
@@ -37,12 +57,38 @@ class RetrievalTwoStage_addgtfunction(Dataset):
         split_mode = file_name.split("_")[1] #random
         self.mode = file_name.split("_")[0] #train
         fold = file_name[-1]
-        retrie_file = split_mode + "_" + self.mode + fold + "_retrieval" + ".pkl" # random_train0_retrieval.csv
-        retrie_file = os.path.join("data/retrieval", retrie_file)
-        with open(retrie_file, 'rb') as file:
-            self.twodrug2topk = pickle.load(file)
+        retrie_file_name = split_mode + "_" + self.mode + fold + "_retrieval" + ".pkl" # random_train0_retrieval.csv
+        retrie_file = os.path.join("data/retrieval", retrie_file_name)
+        if not os.path.exists(retrie_file):
+            for cand_dir in ["./data/retrieval", "../data/retrieval", "retrieval"]:
+                cand = os.path.join(cand_dir, retrie_file_name)
+                if os.path.exists(cand):
+                    retrie_file = cand
+                    break
+        if os.path.exists(retrie_file):
+            with open(retrie_file, 'rb') as file:
+                self.twodrug2topk = pickle.load(file)
+        else:
+            print(f"Notice: Retrieval file '{retrie_file}' not found. Using default top-k retrieval mapping.")
+            self.twodrug2topk = {}
 
-
+        # Check for cached dataset (data_cache.pt or data_cache.pkl)
+        self.data_cache = None
+        for cache_name in ["data_cache.pt", "data_cache.pkl"]:
+            cache_path = os.path.join(self.root, cache_name)
+            if os.path.exists(cache_path):
+                try:
+                    if cache_name.endswith(".pt"):
+                        try:
+                            self.data_cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+                        except TypeError:
+                            self.data_cache = torch.load(cache_path, map_location="cpu")
+                    else:
+                        with open(cache_path, "rb") as f:
+                            self.data_cache = pickle.load(f)
+                    break
+                except Exception as e:
+                    print(f"Warning: Failed to load {cache_path}: {e}")
 
     def get(self, index):
         return self.__getitem__(index)
@@ -51,65 +97,91 @@ class RetrievalTwoStage_addgtfunction(Dataset):
         return len(self)
 
     def __len__(self):
+        if self.data_cache is not None and "items" in self.data_cache:
+            return len(self.data_cache["items"])
         if 'train' in self.root:
             return int(count_subdirectories(self.root + "text/"))
         else:
             return int(count_subdirectories(self.root + "text/"))
 
     def __getitem__(self, index):
-        drug1_name_list = os.listdir(self.root + 'drugname1/' + str(index) + '/') # text.txt
-        drug2_name_list = os.listdir(self.root + 'drugname2/' + str(index) + '/')
-        graph1_name_list = os.listdir(self.root + 'graph1/' + str(index) + '/')
-        graph2_name_list = os.listdir(self.root + 'graph2/' + str(index) + '/')
-        text_name_list = os.listdir(self.root + 'text/' + str(index) + '/')
-        if self.mode=="train" and self.add_gt:
-            function1_name_list = os.listdir(self.root + 'function1/' + str(index) + '/')
-            function2_name_list = os.listdir(self.root + 'function2/' + str(index) + '/')
-        smiles1_name_list = os.listdir(self.root+'smiles1/'+str(index)+'/')
-        smiles2_name_list = os.listdir(self.root+'smiles2/'+str(index)+'/')
+        if self.data_cache is not None and "items" in self.data_cache:
+            item = self.data_cache["items"][index]
+            drug1_name = item["drug1_name"]
+            drug2_name = item["drug2_name"]
+            smiles1 = item["smiles1"]
+            smiles2 = item["smiles2"]
+            mech_des = item["mechanism_des"]
+            function1 = item.get("function1", "")
+            function2 = item.get("function2", "")
 
-        
+            graphs = self.data_cache.get("graphs", {})
+            data_graph1 = graphs.get(smiles1)
+            if data_graph1 is None:
+                data_graph1 = mol_to_graph_data_obj_simple(smiles1)
+            data_graph2 = graphs.get(smiles2)
+            if data_graph2 is None:
+                data_graph2 = mol_to_graph_data_obj_simple(smiles2)
+        else:
+            drug1_name_list = os.listdir(self.root + 'drugname1/' + str(index) + '/') # text.txt
+            drug2_name_list = os.listdir(self.root + 'drugname2/' + str(index) + '/')
+            graph1_name_list = os.listdir(self.root + 'graph1/' + str(index) + '/')
+            graph2_name_list = os.listdir(self.root + 'graph2/' + str(index) + '/')
+            text_name_list = os.listdir(self.root + 'text/' + str(index) + '/')
+            if self.mode=="train" and self.add_gt:
+                function1_name_list = os.listdir(self.root + 'function1/' + str(index) + '/')
+                function2_name_list = os.listdir(self.root + 'function2/' + str(index) + '/')
+            smiles1_name_list = os.listdir(self.root+'smiles1/'+str(index)+'/')
+            smiles2_name_list = os.listdir(self.root+'smiles2/'+str(index)+'/')
 
-        # load drug 1
-        drug_path1 = os.path.join(self.root, 'drugname1/' + str(index) + '/', drug1_name_list[0])
-        with open(drug_path1, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            drug1_name = lines[0].strip('\n').strip()
-        graph_path = os.path.join(self.root, 'graph1/' + str(index) + '/', graph1_name_list[0])
-        data_graph1 = torch.load(graph_path)
-        smiles_path1 = os.path.join(self.root, 'smiles1/'+str(index)+'/', smiles1_name_list[0])
-        with open(smiles_path1, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            smiles1 = lines[0].strip()
-        if self.mode=="train" and self.add_gt:
-            function1_path = os.path.join(self.root, 'function1/' + str(index) + '/', function1_name_list[0])
-            with open(function1_path, 'r', encoding='utf-8') as f:
+            # load drug 1
+            drug_path1 = os.path.join(self.root, 'drugname1/' + str(index) + '/', drug1_name_list[0])
+            with open(drug_path1, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 assert len(lines) == 1
-                function1 = lines[0].strip('\n').strip()
-
-        # load drug 2
-        drug_path2 = os.path.join(self.root, 'drugname2/' + str(index) + '/', drug2_name_list[0])
-        with open(drug_path2, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            drug2_name = lines[0].strip('\n').strip()
-        graph_path = os.path.join(self.root, 'graph2/' + str(index) + '/', graph2_name_list[0])
-        data_graph2 = torch.load(graph_path)
-        smiles_path2 = os.path.join(self.root, 'smiles2/'+str(index)+'/', smiles2_name_list[0])
-        with open(smiles_path2, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            smiles2 = lines[0].strip()  
-        if self.mode =="train" and self.add_gt:
-            function2_path = os.path.join(self.root, 'function2/' + str(index) + '/', function2_name_list[0])
-            with open(function2_path, 'r', encoding='utf-8') as f:
+                drug1_name = lines[0].strip('\n').strip()
+            graph_path = os.path.join(self.root, 'graph1/' + str(index) + '/', graph1_name_list[0])
+            data_graph1 = torch.load(graph_path)
+            smiles_path1 = os.path.join(self.root, 'smiles1/'+str(index)+'/', smiles1_name_list[0])
+            with open(smiles_path1, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 assert len(lines) == 1
-                function2 = lines[0].strip('\n').strip()
+                smiles1 = lines[0].strip()
+            if self.mode=="train" and self.add_gt:
+                function1_path = os.path.join(self.root, 'function1/' + str(index) + '/', function1_name_list[0])
+                with open(function1_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    assert len(lines) == 1
+                    function1 = lines[0].strip('\n').strip()
 
+            # load drug 2
+            drug_path2 = os.path.join(self.root, 'drugname2/' + str(index) + '/', drug2_name_list[0])
+            with open(drug_path2, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                drug2_name = lines[0].strip('\n').strip()
+            graph_path = os.path.join(self.root, 'graph2/' + str(index) + '/', graph2_name_list[0])
+            data_graph2 = torch.load(graph_path)
+            smiles_path2 = os.path.join(self.root, 'smiles2/'+str(index)+'/', smiles2_name_list[0])
+            with open(smiles_path2, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                smiles2 = lines[0].strip()  
+            if self.mode =="train" and self.add_gt:
+                function2_path = os.path.join(self.root, 'function2/' + str(index) + '/', function2_name_list[0])
+                with open(function2_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    assert len(lines) == 1
+                    function2 = lines[0].strip('\n').strip()
+
+            # load ddie description
+            text_path = os.path.join(self.root, 'text/' + str(index) + '/', text_name_list[0])
+            count = 0
+            mech_des = ""
+            for line in open(text_path, 'r', encoding='utf-8'):
+                count += 1
+                mech_des = line.strip('\n')
+                break
 
         two_drug_name = drug1_name + "&" + drug2_name
         two_drug_name_rev = drug2_name + "&" + drug1_name
@@ -125,35 +197,20 @@ class RetrievalTwoStage_addgtfunction(Dataset):
         top_k_score1 = retrieval_infor[2][:self.retrieval_number]
         top_k_score2 = retrieval_infor[3][:self.retrieval_number]
 
-
         assert len(drug1_retrieval) == len(drug2_retrieval),f"retrieval func1:{len(drug1_retrieval)}; retrieval func2:{len(drug2_retrieval)}"
         # The input of two drugs,contain smiles, mol, function
         top_k_CoT_prompt = []
-        for id, func1 in enumerate(drug1_retrieval):
-            func2 = drug2_retrieval[id]
-            mol_prompt1 = self.mol_prompt1.format(smiles1[:128], self.uni_function_list[func1] )
-            mol_prompt2 = self.mol_prompt2.format(smiles2[:128], self.uni_function_list[func2] )
+        for id, func1_idx in enumerate(drug1_retrieval):
+            func2_idx = drug2_retrieval[id]
+            mol_prompt1 = self.mol_prompt1.format(smiles1[:128], self.uni_function_list[func1_idx] )
+            mol_prompt2 = self.mol_prompt2.format(smiles2[:128], self.uni_function_list[func2_idx] )
             mol_prompt = '<s>' + mol_prompt1 + '</s>' + ' <s>' + mol_prompt2 + '</s>'
             top_k_CoT_prompt.append(mol_prompt)
         if self.mode=="train" and self.add_gt :
             top_k_CoT_prompt.append('<s>' + self.mol_prompt1.format(smiles1[:128], function1 ) + '</s>' + ' <s>' + self.mol_prompt2.format(smiles2[:128], function2 ) + '</s>')
 
         inputs = top_k_CoT_prompt
-
-       
-
-        # load ddie description
-        text_path = os.path.join(self.root, 'text/' + str(index) + '/', text_name_list[0])
-        outputs = []
-        count = 0
-        for line in open(text_path, 'r', encoding='utf-8'):
-            count += 1
-            ddie = line.strip('\n')
-            #print(ddie+'.')
-            outputs.append(str(ddie) + '.')
-            if count > 100:
-                break
-
+        outputs = [str(mech_des) + '.']
 
         return data_graph1, data_graph2, inputs, drug1_name, drug2_name, outputs, top_k_score1, top_k_score2
 
@@ -314,27 +371,57 @@ class RetrievalTwoStage_kchengk(Dataset):
         self.mol_token_id = mol_token_id["mol"]
         self.collater = Collater([], [])
         self.retrieval_number = cfg["retrieval_function_number"]
-        #self.smiles_prompt = 'The SMILES of this molecule is [START_I_SMILES]{}[END_I_SMILES]. '
 
         ### retrieval index
         all_function_list_file = "data/retrieval/uni_function_list.pkl"
+        if not os.path.exists(all_function_list_file):
+            for cand in ["./data/retrieval/uni_function_list.pkl", "../data/retrieval/uni_function_list.pkl", "retrieval/uni_function_list.pkl"]:
+                if os.path.exists(cand):
+                    all_function_list_file = cand
+                    break
         with open(all_function_list_file, 'rb') as f:
             self.uni_function_list = pickle.load(f)
 
         ### load retrieval
         file_name = os.path.basename(os.path.normpath(self.root)) # train_random_split0
         split_mode = file_name.split("_")[1] #random
-        print("split_mode",split_mode)
+        print("split_mode", split_mode)
         mode = file_name.split("_")[0] #train
-        print("mode",mode)
+        print("mode", mode)
         fold = file_name[-1]
-        retrie_file = split_mode + "_" + mode + fold + "_retrieval" + ".pkl" # random_train0_retrieval.csv
-        retrie_file = os.path.join("data/retrieval", retrie_file)
-        print("retrie_file",retrie_file)
-        with open(retrie_file, 'rb') as file:
-            self.twodrug2topk = pickle.load(file)
+        retrie_file_name = split_mode + "_" + mode + fold + "_retrieval" + ".pkl" # random_train0_retrieval.csv
+        retrie_file = os.path.join("data/retrieval", retrie_file_name)
+        if not os.path.exists(retrie_file):
+            for cand_dir in ["./data/retrieval", "../data/retrieval", "retrieval"]:
+                cand = os.path.join(cand_dir, retrie_file_name)
+                if os.path.exists(cand):
+                    retrie_file = cand
+                    break
+        print("retrie_file", retrie_file)
+        if os.path.exists(retrie_file):
+            with open(retrie_file, 'rb') as file:
+                self.twodrug2topk = pickle.load(file)
+        else:
+            print(f"Notice: Retrieval file '{retrie_file}' not found. Using default top-k retrieval mapping.")
+            self.twodrug2topk = {}
 
-
+        # Check for cached dataset (data_cache.pt or data_cache.pkl)
+        self.data_cache = None
+        for cache_name in ["data_cache.pt", "data_cache.pkl"]:
+            cache_path = os.path.join(self.root, cache_name)
+            if os.path.exists(cache_path):
+                try:
+                    if cache_name.endswith(".pt"):
+                        try:
+                            self.data_cache = torch.load(cache_path, map_location="cpu", weights_only=False)
+                        except TypeError:
+                            self.data_cache = torch.load(cache_path, map_location="cpu")
+                    else:
+                        with open(cache_path, "rb") as f:
+                            self.data_cache = pickle.load(f)
+                    break
+                except Exception as e:
+                    print(f"Warning: Failed to load {cache_path}: {e}")
 
     def get(self, index):
         return self.__getitem__(index)
@@ -343,63 +430,88 @@ class RetrievalTwoStage_kchengk(Dataset):
         return len(self)
 
     def __len__(self):
+        if self.data_cache is not None and "items" in self.data_cache:
+            return len(self.data_cache["items"])
         if 'train' in self.root:     
             return int(count_subdirectories(self.root + "text/"))
         else:
             return int(count_subdirectories(self.root + "text/"))
-            
 
     def __getitem__(self, index):
-        drug1_name_list = os.listdir(self.root + 'drugname1/' + str(index) + '/') # text.txt
-        drug2_name_list = os.listdir(self.root + 'drugname2/' + str(index) + '/')
-        graph1_name_list = os.listdir(self.root + 'graph1/' + str(index) + '/')
-        graph2_name_list = os.listdir(self.root + 'graph2/' + str(index) + '/')
-        text_name_list = os.listdir(self.root + 'text/' + str(index) + '/')
-        function1_name_list = os.listdir(self.root + 'function1/' + str(index) + '/')
-        function2_name_list = os.listdir(self.root + 'function2/' + str(index) + '/')
-        smiles1_name_list = os.listdir(self.root+'smiles1/'+str(index)+'/')
-        smiles2_name_list = os.listdir(self.root+'smiles2/'+str(index)+'/')
+        if self.data_cache is not None and "items" in self.data_cache:
+            item = self.data_cache["items"][index]
+            drug1_name = item["drug1_name"]
+            drug2_name = item["drug2_name"]
+            smiles1 = item["smiles1"]
+            smiles2 = item["smiles2"]
+            mech_des = item["mechanism_des"]
+            function1 = item.get("function1", "")
+            function2 = item.get("function2", "")
 
-        
+            graphs = self.data_cache.get("graphs", {})
+            data_graph1 = graphs.get(smiles1)
+            if data_graph1 is None:
+                data_graph1 = mol_to_graph_data_obj_simple(smiles1)
+            data_graph2 = graphs.get(smiles2)
+            if data_graph2 is None:
+                data_graph2 = mol_to_graph_data_obj_simple(smiles2)
+        else:
+            drug1_name_list = os.listdir(self.root + 'drugname1/' + str(index) + '/') # text.txt
+            drug2_name_list = os.listdir(self.root + 'drugname2/' + str(index) + '/')
+            graph1_name_list = os.listdir(self.root + 'graph1/' + str(index) + '/')
+            graph2_name_list = os.listdir(self.root + 'graph2/' + str(index) + '/')
+            text_name_list = os.listdir(self.root + 'text/' + str(index) + '/')
+            function1_name_list = os.listdir(self.root + 'function1/' + str(index) + '/')
+            function2_name_list = os.listdir(self.root + 'function2/' + str(index) + '/')
+            smiles1_name_list = os.listdir(self.root+'smiles1/'+str(index)+'/')
+            smiles2_name_list = os.listdir(self.root+'smiles2/'+str(index)+'/')
 
-        # load drug 1
-        drug_path1 = os.path.join(self.root, 'drugname1/' + str(index) + '/', drug1_name_list[0])
-        with open(drug_path1, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            drug1_name = lines[0].strip('\n').strip()
-        graph_path = os.path.join(self.root, 'graph1/' + str(index) + '/', graph1_name_list[0])
-        data_graph1 = torch.load(graph_path)
-        smiles_path1 = os.path.join(self.root, 'smiles1/'+str(index)+'/', smiles1_name_list[0])
-        with open(smiles_path1, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            smiles1 = lines[0].strip()
-        function1_path = os.path.join(self.root, 'function1/' + str(index) + '/', function1_name_list[0])
-        with open(function1_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            function1 = lines[0].strip('\n').strip()
+            # load drug 1
+            drug_path1 = os.path.join(self.root, 'drugname1/' + str(index) + '/', drug1_name_list[0])
+            with open(drug_path1, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                drug1_name = lines[0].strip('\n').strip()
+            graph_path = os.path.join(self.root, 'graph1/' + str(index) + '/', graph1_name_list[0])
+            data_graph1 = torch.load(graph_path)
+            smiles_path1 = os.path.join(self.root, 'smiles1/'+str(index)+'/', smiles1_name_list[0])
+            with open(smiles_path1, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                smiles1 = lines[0].strip()
+            function1_path = os.path.join(self.root, 'function1/' + str(index) + '/', function1_name_list[0])
+            with open(function1_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                function1 = lines[0].strip('\n').strip()
 
-        # load drug 2
-        drug_path2 = os.path.join(self.root, 'drugname2/' + str(index) + '/', drug2_name_list[0])
-        with open(drug_path2, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            drug2_name = lines[0].strip('\n').strip()
-        graph_path = os.path.join(self.root, 'graph2/' + str(index) + '/', graph2_name_list[0])
-        data_graph2 = torch.load(graph_path)
-        smiles_path2 = os.path.join(self.root, 'smiles2/'+str(index)+'/', smiles2_name_list[0])
-        with open(smiles_path2, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            smiles2 = lines[0].strip()  
-        function2_path = os.path.join(self.root, 'function2/' + str(index) + '/', function2_name_list[0])
-        with open(function2_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            assert len(lines) == 1
-            function2 = lines[0].strip('\n').strip()
+            # load drug 2
+            drug_path2 = os.path.join(self.root, 'drugname2/' + str(index) + '/', drug2_name_list[0])
+            with open(drug_path2, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                drug2_name = lines[0].strip('\n').strip()
+            graph_path = os.path.join(self.root, 'graph2/' + str(index) + '/', graph2_name_list[0])
+            data_graph2 = torch.load(graph_path)
+            smiles_path2 = os.path.join(self.root, 'smiles2/'+str(index)+'/', smiles2_name_list[0])
+            with open(smiles_path2, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                smiles2 = lines[0].strip()  
+            function2_path = os.path.join(self.root, 'function2/' + str(index) + '/', function2_name_list[0])
+            with open(function2_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                assert len(lines) == 1
+                function2 = lines[0].strip('\n').strip()
 
+            # load ddie description
+            text_path = os.path.join(self.root, 'text/' + str(index) + '/', text_name_list[0])
+            count = 0
+            mech_des = ""
+            for line in open(text_path, 'r', encoding='utf-8'):
+                count += 1
+                mech_des = line.strip('\n')
+                break
 
         two_drug_name = drug1_name + "&" + drug2_name
         two_drug_name_rev = drug2_name + "&" + drug1_name
@@ -415,34 +527,19 @@ class RetrievalTwoStage_kchengk(Dataset):
         top_k_score1 = retrieval_infor[2][:self.retrieval_number]
         top_k_score2 = retrieval_infor[3][:self.retrieval_number]
 
-
         assert len(drug1_retrieval) == len(drug2_retrieval),f"retrieval func1:{len(drug1_retrieval)}; retrieval func2:{len(drug2_retrieval)}"
-
 
         # The input of two drugs,contain smiles, mol, function
         top_k_CoT_prompt = []
-        
-        for id, func1 in enumerate(drug1_retrieval):
-            for func2 in drug2_retrieval:
-                mol_prompt1 = self.mol_prompt1.format(smiles1[:128], self.uni_function_list[func1] )
-                mol_prompt2 = self.mol_prompt2.format(smiles2[:128], self.uni_function_list[func2] )
+        for id, func1_idx in enumerate(drug1_retrieval):
+            for func2_idx in drug2_retrieval:
+                mol_prompt1 = self.mol_prompt1.format(smiles1[:128], self.uni_function_list[func1_idx] )
+                mol_prompt2 = self.mol_prompt2.format(smiles2[:128], self.uni_function_list[func2_idx] )
                 mol_prompt = '<s>' + mol_prompt1 + '</s>' + ' <s>' + mol_prompt2 + '</s>'
                 top_k_CoT_prompt.append(mol_prompt)
-        
-        
-        inputs = top_k_CoT_prompt      
 
-        # load ddie description
-        text_path = os.path.join(self.root, 'text/' + str(index) + '/', text_name_list[0])
-        outputs = []
-        count = 0
-        for line in open(text_path, 'r', encoding='utf-8'):
-            count += 1
-            ddie = line.strip('\n')
-            #print(ddie+'.')
-            outputs.append(str(ddie) + '.')
-            if count > 100:
-                break
+        inputs = top_k_CoT_prompt      
+        outputs = [str(mech_des) + '.']
         
         return data_graph1, data_graph2, inputs, drug1_name, drug2_name, outputs, top_k_score1, top_k_score2
 

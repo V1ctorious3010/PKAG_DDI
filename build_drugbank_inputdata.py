@@ -1,16 +1,7 @@
 """
 Optimized Data Builder for PKAG-DDI on DrugBank dataset.
-Generates the exact input directory structure required for Stage 1 (PKS) and Stage 2 (PKA-LM):
-data/DrugBank_inputdata/{mode}_{split_mode}_split{fold}/
-  ├── graph1/{idx}/graph_data.pt
-  ├── graph2/{idx}/graph_data.pt
-  ├── smiles1/{idx}/text.txt
-  ├── smiles2/{idx}/text.txt
-  ├── text/{idx}/text.txt
-  ├── drugname1/{idx}/text.txt
-  ├── drugname2/{idx}/text.txt
-  ├── function1/{idx}/text.txt
-  └── function2/{idx}/text.txt
+Generates compact, high-speed dataset caches (data_cache.pt and data_cache.pkl)
+to prevent filesystem inode/disk exhaustion on Kaggle and cloud environments.
 """
 
 import os
@@ -23,9 +14,8 @@ import torch
 from rdkit import Chem
 from torch_geometric.data import Data
 from tqdm import tqdm
-
-
 from ogb.utils import smiles2graph
+
 
 def mol_to_graph_data_obj_simple(smiles: str) -> Data:
     try:
@@ -49,7 +39,7 @@ def build_input_data(
     max_samples: int = None,
     data_base_dir: str = "./data",
 ):
-    """Build input folder for a given split."""
+    """Build input cache for a given split."""
     # Determine input text list file
     if split_mode == "random":
         input_file = f"{data_base_dir}/{dataset_name}/random_split/{mode}_seed{fold}.txt"
@@ -95,57 +85,41 @@ def build_input_data(
 
     # Cache graph objects for unique SMILES
     graph_cache = {}
+    items = []
 
-    for i, key in enumerate(tqdm(ddi_keys, desc=f"{split_mode}_{mode}{fold}")):
+    for key in tqdm(ddi_keys, desc=f"{split_mode}_{mode}{fold}"):
         item = all_dict[key]
         d1, d2 = item["drug1_name"], item["drug2_name"]
         s1, s2 = item["SMILES1"], item["SMILES2"]
         mech_des = item["mechanism_des"]
-        f1 = item["function1"][0]
-        f2 = item["function2"][0]
+        f1 = item["function1"][0] if isinstance(item["function1"], (list, tuple)) else item["function1"]
+        f2 = item["function2"][0] if isinstance(item["function2"], (list, tuple)) else item["function2"]
 
-        # Directory paths
-        d_smiles1 = os.path.join(output_dir, "smiles1", str(i))
-        d_smiles2 = os.path.join(output_dir, "smiles2", str(i))
-        d_graph1 = os.path.join(output_dir, "graph1", str(i))
-        d_graph2 = os.path.join(output_dir, "graph2", str(i))
-        d_text = os.path.join(output_dir, "text", str(i))
-        d_name1 = os.path.join(output_dir, "drugname1", str(i))
-        d_name2 = os.path.join(output_dir, "drugname2", str(i))
-        d_func1 = os.path.join(output_dir, "function1", str(i))
-        d_func2 = os.path.join(output_dir, "function2", str(i))
-
-        for d in [d_smiles1, d_smiles2, d_graph1, d_graph2, d_text, d_name1, d_name2, d_func1, d_func2]:
-            os.makedirs(d, exist_ok=True)
-
-        # Graph 1 & 2
         if s1 not in graph_cache:
             graph_cache[s1] = mol_to_graph_data_obj_simple(s1)
         if s2 not in graph_cache:
             graph_cache[s2] = mol_to_graph_data_obj_simple(s2)
 
-        torch.save(graph_cache[s1], os.path.join(d_graph1, "graph_data.pt"))
-        torch.save(graph_cache[s2], os.path.join(d_graph2, "graph_data.pt"))
+        items.append({
+            "drug1_name": d1,
+            "drug2_name": d2,
+            "smiles1": s1,
+            "smiles2": s2,
+            "mechanism_des": mech_des,
+            "function1": f1,
+            "function2": f2,
+        })
 
-        with open(os.path.join(d_smiles1, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(s1)
-        with open(os.path.join(d_smiles2, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(s2)
+    os.makedirs(output_dir, exist_ok=True)
+    cache_data = {
+        "items": items,
+        "graphs": graph_cache,
+    }
+    torch.save(cache_data, os.path.join(output_dir, "data_cache.pt"))
+    with open(os.path.join(output_dir, "data_cache.pkl"), "wb") as f:
+        pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-        with open(os.path.join(d_text, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(mech_des + "\n")
-
-        with open(os.path.join(d_func1, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(f1 + "\n")
-        with open(os.path.join(d_func2, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(f2 + "\n")
-
-        with open(os.path.join(d_name1, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(d1 + "\n")
-        with open(os.path.join(d_name2, "text.txt"), "w", encoding="utf-8") as f:
-            f.write(d2 + "\n")
-
-    print(f"Finished building {output_dir}.")
+    print(f"Finished building {output_dir} (Saved {len(items)} items & {len(graph_cache)} graphs).")
 
 
 if __name__ == "__main__":
