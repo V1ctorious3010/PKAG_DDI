@@ -96,50 +96,80 @@ def main(args):
         raise NotImplementedError
     datasets = build_dataset(cfg["dataset"], args, tokenizer)
 
-    # multi device  Parallel  strategy
+    # multi device Parallel strategy & hardware detection
     num_available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     device_list = [int(d) for d in str(args.devices).split(',') if d.strip().isdigit()]
     
     if num_available_gpus > 1 and len(device_list) > 1:
+        devices = device_list
+        accelerator = "gpu"
         if args.strategy_name == 'fsdp':
-            strategy = strategies.DDPFullyShardedNativeStrategy()
+            strategy = 'fsdp'
         elif args.strategy_name == 'deepspeed':
-            strategy = strategies.DeepSpeedStrategy(stage=3)
+            strategy = 'deepspeed_stage_3'
         else:
-            strategy = MyDDPSpawnStrategy(find_unused_parameters=False)
+            strategy = 'ddp_find_unused_parameters_true'
+    elif num_available_gpus >= 1:
+        print("Single GPU mode")
+        devices = [device_list[0]] if device_list else [0]
+        accelerator = "gpu"
+        strategy = "auto"
     else:
-        print("Single GPU or CPU mode")
-        strategy = None
-        args.devices = [0] if num_available_gpus > 0 else 0
-        args.accelerator = "gpu" if num_available_gpus > 0 else "cpu"
+        print("CPU mode")
+        devices = 1
+        accelerator = "cpu"
+        strategy = "auto"
+
+    precision = args.precision
+    if accelerator == "cpu" and precision in ["16", "bf16", "16-mixed", "bf16-mixed"]:
+        precision = "32"
+    elif accelerator == "gpu" and precision in ["bf16", "16"]:
+        # Handle PyTorch Lightning precision strings (16-mixed / bf16-mixed)
+        try:
+            precision = "bf16-mixed" if (precision == "bf16" and torch.cuda.is_bf16_supported()) else "16-mixed"
+        except Exception:
+            precision = "16-mixed"
+
+    max_epochs = cfg.get("max_epochs", 30)
 
     # start to train
     if args.mode in {'pretrain', 'ft'}:
-        trainer = Trainer.from_argparse_args(args,
-                                             callbacks=callbacks,
-                                             strategy=strategy,
-                                             logger=logger
-                                             )
-
+        trainer = Trainer(
+            accelerator=accelerator,
+            devices=devices,
+            max_epochs=max_epochs,
+            callbacks=callbacks,
+            strategy=strategy,
+            logger=logger,
+            precision=precision,
+        )
         trainer.fit(model, datamodule=datasets)
     elif args.mode == "breakpoint":
-        trainer = Trainer(resume_from_checkpoint=args.breakpoint_file,
-                          callbacks=callbacks,
-                          precision=args.precision, accelerator=args.accelerator)
-        trainer.fit(model, datamodule=datasets)
+        trainer = Trainer(
+            accelerator=accelerator,
+            devices=devices,
+            max_epochs=max_epochs,
+            callbacks=callbacks,
+            strategy=strategy,
+            logger=logger,
+            precision=precision,
+        )
+        trainer.fit(model, datamodule=datasets, ckpt_path=args.breakpoint_file if args.breakpoint_file else None)
     elif args.mode == 'eval':
-        trainer = Trainer(resume_from_checkpoint=args.work_dir, precision=args.precision, accelerator=args.accelerator)
-        trainer.test(model, datamodule=datasets)
+        trainer = Trainer(
+            accelerator=accelerator,
+            devices=devices,
+            callbacks=callbacks,
+            strategy=strategy,
+            logger=logger,
+            precision=precision,
+        )
+        trainer.test(model, datamodule=datasets, ckpt_path=args.work_dir if args.work_dir else None)
     else:
         raise NotImplementedError()
 
 
-class MyDDPSpawnStrategy(strategies.DDPSpawnStrategy):
-    def load_model_state_dict(self, checkpoint):
-        assert self.lightning_module is not None
-        self.lightning_module.load_state_dict(checkpoint["state_dict"], strict=False)
-
-
 if __name__ == '__main__':
     main(parse_args())
+
 

@@ -1,0 +1,1 @@
+#Drug1 may increase the hypokalemic activities of #Drug2.

@@ -1,0 +1,1 @@
+C1=CC(=C(C=C1Cl)Cl)CO/N=C(\CN2C=CN=C2)/C3=C(C=C(C=C3)Cl)Cl

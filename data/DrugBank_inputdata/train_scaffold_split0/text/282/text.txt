@@ -1,0 +1,1 @@
+#Drug1 may decrease the excretion rate of #Drug2 which could result in a higher serum level.

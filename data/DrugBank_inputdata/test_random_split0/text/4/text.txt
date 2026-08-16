@@ -1,0 +1,1 @@
+The serum concentration of #Drug2 can be decreased when it is combined with #Drug1.

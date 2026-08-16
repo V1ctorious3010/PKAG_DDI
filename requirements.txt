@@ -6,7 +6,6 @@ pytorch_lightning>=1.9.0
 peft>=0.7.0
 salesforce-lavis
 rouge_score
-deepspeed
 wandb
 pandas
 numpy
@@ -14,3 +13,4 @@ scikit-learn
 pyyaml
 tqdm
 matplotlib
+easydict

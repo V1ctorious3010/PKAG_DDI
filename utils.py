@@ -158,8 +158,14 @@ def make_label_vector(labels, num_classes):
     return label_vector
 
 def results_metrics(prediction=None, target=None, dataset_name="DrugBank", data_dir="./data"):
+    if prediction is None or len(prediction) == 0:
+        return {"acc": 0.0, "f1": 0.0, "precision": 0.0, "recall": 0.0}
+    if target is None:
+        target = prediction
+
     candidate_des_paths = [
         os.path.join(data_dir, dataset_name, "mechanism_des2id.pkl"),
+        os.path.join(data_dir, "DrugBank", "mechanism_des2id.pkl"),
         f"./data/{dataset_name}/mechanism_des2id.pkl",
         f"./PKAG_DDI_repo/data/{dataset_name}/mechanism_des2id.pkl",
         "./data/DrugBank/mechanism_des2id.pkl",
@@ -167,6 +173,7 @@ def results_metrics(prediction=None, target=None, dataset_name="DrugBank", data_
     ]
     candidate_id_paths = [
         os.path.join(data_dir, dataset_name, "id2mechanism.pkl"),
+        os.path.join(data_dir, "DrugBank", "id2mechanism.pkl"),
         f"./data/{dataset_name}/id2mechanism.pkl",
         f"./PKAG_DDI_repo/data/{dataset_name}/id2mechanism.pkl",
         "./data/DrugBank/id2mechanism.pkl",
@@ -190,24 +197,26 @@ def results_metrics(prediction=None, target=None, dataset_name="DrugBank", data_
         id2ddie = pickle.load(f)
 
     all_ddie_descriptions = []
-    for id in range(len(ddie2id)):
-        all_ddie_descriptions.append(id2ddie[id])
-    gt_all_ddie_num = len(all_ddie_descriptions)
+    for id_val in range(len(ddie2id)):
+        all_ddie_descriptions.append(str(id2ddie[id_val]))
 
-    all_text = all_ddie_descriptions + prediction
+    cleaned_predictions = [str(p).strip() if str(p).strip() else "unknown" for p in prediction]
+
     vectorizer = CountVectorizer()
-    X = vectorizer.fit_transform(all_text)
-    cosine_sim = cosine_similarity(X, X)
-    pre = cosine_sim[gt_all_ddie_num:, :gt_all_ddie_num]
+    X_templates = vectorizer.fit_transform(all_ddie_descriptions)
+    X_pred = vectorizer.transform(cleaned_predictions)
+    pre = cosine_similarity(X_pred, X_templates)
     pred = np.argmax(pre, axis=1)
 
     gt_label = []
     for p in target:
-        cleaned = p.strip()
+        cleaned = str(p).strip()
         if cleaned in ddie2id:
             gt_label.append(ddie2id[cleaned])
-        elif p[:-1] in ddie2id:
-            gt_label.append(ddie2id[p[:-1]])
+        elif cleaned.rstrip(".") in ddie2id:
+            gt_label.append(ddie2id[cleaned.rstrip(".")])
+        elif cleaned + "." in ddie2id:
+            gt_label.append(ddie2id[cleaned + "."])
         else:
             gt_label.append(0)
     gt_label = np.array(gt_label)

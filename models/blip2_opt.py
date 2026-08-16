@@ -14,10 +14,12 @@ from ogb.utils import smiles2graph
 from torch_geometric.loader.dataloader import Collater
 from torch_geometric.data import Data
 import numpy as np
-from lavis.models.blip2_models.blip2 import (
-    # Blip2Base,
-    disabled_train,
-)
+try:
+    from lavis.models.blip2_models.blip2 import disabled_train
+except ImportError:
+    def disabled_train(self, mode=True):
+        return self
+
 from .utils.blip2 import Blip2Base
 from transformers import AutoTokenizer,AutoModel
 from transformers import OPTForCausalLM

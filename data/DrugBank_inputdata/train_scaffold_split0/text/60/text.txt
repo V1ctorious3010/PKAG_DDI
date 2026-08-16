@@ -1,0 +1,1 @@
+#Drug1 may increase the sedative activities of #Drug2.

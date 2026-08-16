@@ -22,7 +22,7 @@
     "mol_prompt1": "The first drug is [START_I_SMILES]{}[END_I_SMILES] [START_MOL][END_MOL]. [START_CoT]The function is {}[END_CoT].",
     "mol_prompt2": "The second drug is [START_I_SMILES]{}[END_I_SMILES] [START_MOL][END_MOL]. [START_CoT]The function is {}[END_CoT].",
     "train_root": "./data/DrugBank_inputdata/train_scaffold_split0/",
-    "valid_root": "./data/DrugBank_inputdata/test_scaffold_split0/",
+    "valid_root": "./data/DrugBank_inputdata/val_scaffold_split0/",
     "test_root": "./data/DrugBank_inputdata/test_scaffold_split0/"
   },
   "model": {

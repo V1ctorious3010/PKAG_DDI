@@ -7,9 +7,14 @@ from .blip2_function_retrieval import Blip2OPT_RETRIEVAL,Blip2OPT_RETRIEVAL_marg
 
 import pytorch_lightning as pl
 from torch import optim
-from lavis.common.optims import LinearWarmupCosineLRScheduler, LinearWarmupStepLRScheduler
+try:
+    from lavis.common.optims import LinearWarmupCosineLRScheduler, LinearWarmupStepLRScheduler
+except ImportError:
+    LinearWarmupCosineLRScheduler = None
+    LinearWarmupStepLRScheduler = None
 import json
 from utils import results_metrics, caption_evaluate, AttrDict, do_compute_metrics
+
 import torch.distributed as dist
 from peft import LoraConfig, TaskType
 import numpy as np
@@ -61,29 +66,36 @@ class MainModel_Function_CLS(pl.LightningModule):  #
         else:
             raise NotImplementedError()
         self.tokenizer = self.blip2opt.init_tokenizer()
-        self.save_hyperparameters(args)
+        self.validation_step_outputs = []
+        self.test_step_outputs = []
+        self.scheduler = None
+        try:
+            self.save_hyperparameters(args)
+        except Exception:
+            pass
 
     def training_step(self, batch, batch_idx):
-
-        if self.scheduler:
+        if hasattr(self, 'scheduler') and self.scheduler is not None:
             self.scheduler.step(self.trainer.current_epoch, self.trainer.global_step)
 
         ###============== Overall Loss ===================###
         loss = self.blip2opt(batch)
         self.log("molecule loss", float(loss['loss']), batch_size=self.batch_size, sync_dist=True)
-        self.log("lr", self.trainer.optimizers[0].param_groups[0]['lr'], batch_size=self.batch_size, sync_dist=True)
+        try:
+            self.log("lr", self.trainer.optimizers[0].param_groups[0]['lr'], batch_size=self.batch_size, sync_dist=True)
+        except Exception:
+            pass
         return loss['loss']
 
     @torch.no_grad()
     def validation_step(self, batch, batch_idx, dataloader_idx=None):
-
         if (self.current_epoch + 1) % self.caption_eval_epoch != 0:
-            return
+            return None
 
         loss = self.blip2opt(batch[:-2])
         self.log("val_loss", float(loss['loss']), batch_size=self.batch_size, sync_dist=True)
 
-        CoT_pred, predictions,drug_name1, drug_name2 = self.blip2opt.generate(
+        CoT_pred, predictions, drug_name1, drug_name2 = self.blip2opt.generate(
             batch,
             do_sample=self.do_sample,
             num_beams=self.num_beams,
@@ -91,94 +103,74 @@ class MainModel_Function_CLS(pl.LightningModule):  #
             min_length=self.min_len,
             max_new_tokens=self.max_new_tokens
         )
-        # print
-        return CoT_pred, predictions, batch[-2], batch[-1]
+        out = (CoT_pred, predictions, batch[-2], batch[-1])
+        self.validation_step_outputs.append(out)
+        return out
+
+    def on_validation_epoch_end(self):
+        outputs = [o for o in self.validation_step_outputs if o is not None]
+        self.validation_step_outputs = []
+        if len(outputs) > 0 and self.current_epoch != 0:
+            if (self.current_epoch + 1) % self.caption_eval_epoch == 0:
+                self._shared_val_epoch_end(outputs)
 
     def validation_epoch_end(self, outputs):
-        if self.current_epoch != 0:
-            if (self.current_epoch + 1) % self.caption_eval_epoch != 0:
-                return
-            # print("output",outputs)
-            caption_outputs = outputs
-            CoT_pred_list, list_predictions, CoT_target_list, list_targets = zip(*caption_outputs)
-            if CoT_pred_list[0] == None:
-                predictions = [i for ii in list_predictions for i in ii]
-                targets = [i for ii in list_targets for i in ii]
-                all_predictions = [None for _ in range(self.trainer.world_size)]
-                all_targets = [None for _ in range(self.trainer.world_size)]
-                dist.all_gather_object(all_predictions, predictions)
-                dist.all_gather_object(all_targets, targets)
-                if self.global_rank == 0:
-                    all_predictions = [i for ii in all_predictions for i in ii]
-                    all_targets = [i for ii in all_targets for i in ii]
+        if outputs and len(outputs) > 0:
+            self._shared_val_epoch_end(outputs)
 
-                    self.save_predictions_valid(all_predictions, all_targets, None, None)
-            else:
-                predictions = [i for ii in list_predictions for i in ii]
-                targets = [i for ii in list_targets for i in ii]
-                CoT_preds = [i for ii in CoT_pred_list for i in ii]
-                CoT_targets = [i for ii in CoT_target_list for i in ii]
-                all_predictions = [None for _ in range(self.trainer.world_size)]
-                all_targets = [None for _ in range(self.trainer.world_size)]
+    def _shared_val_epoch_end(self, outputs):
+        caption_outputs = outputs
+        CoT_pred_list, list_predictions, CoT_target_list, list_targets = zip(*caption_outputs)
+        predictions = [i for ii in list_predictions for i in ii]
+        targets = [i for ii in list_targets for i in ii]
+        CoT_preds = [i for ii in CoT_pred_list for i in ii] if CoT_pred_list[0] is not None else None
+        CoT_targets = [i for ii in CoT_target_list for i in ii] if CoT_target_list[0] is not None else None
+
+        if dist.is_available() and dist.is_initialized() and self.trainer.world_size > 1:
+            all_predictions = [None for _ in range(self.trainer.world_size)]
+            all_targets = [None for _ in range(self.trainer.world_size)]
+            dist.all_gather_object(all_predictions, predictions)
+            dist.all_gather_object(all_targets, targets)
+            predictions = [i for ii in all_predictions for i in ii]
+            targets = [i for ii in all_targets for i in ii]
+            if CoT_preds is not None:
                 all_CoT_preds = [None for _ in range(self.trainer.world_size)]
                 all_CoT_targets = [None for _ in range(self.trainer.world_size)]
-                # all_predictions = predictions
-                # all_targets =targets
-                dist.all_gather_object(all_predictions, predictions)
-                dist.all_gather_object(all_targets, targets)
                 dist.all_gather_object(all_CoT_preds, CoT_preds)
                 dist.all_gather_object(all_CoT_targets, CoT_targets)
-                if self.global_rank == 0:
-                    all_predictions = [i for ii in all_predictions for i in ii]
-                    all_targets = [i for ii in all_targets for i in ii]
-                    all_CoT_preds = [i for ii in all_CoT_preds for i in ii]
-                    all_CoT_targets = [i for ii in all_CoT_targets for i in ii]
-                    # print("all_targets", len(all_targets))
-                    self.save_predictions_valid(all_predictions, all_targets, all_CoT_preds, all_CoT_targets)
+                CoT_preds = [i for ii in all_CoT_preds for i in ii]
+                CoT_targets = [i for ii in all_CoT_targets for i in ii]
+
+        if self.global_rank == 0:
+            self.save_predictions_valid(predictions, targets, CoT_preds, CoT_targets)
 
     def save_predictions_valid(self, predictions, targets, all_CoT_preds, all_CoT_targets):
-
         assert len(predictions) == len(targets), f"predictions:{len(predictions)}, targets:{len(targets)}"
         print("****************show result*********************************")
-        for j in range(5):
+        for j in range(min(5, len(predictions))):
             print("Generated   : %s" % predictions[-j])
             print("Ground truth: %s" % targets[- j])
             print("------------------------------------------------------")
         print("************************************************************")
         if all_CoT_preds is not None:
-
             print("****************show CoT results*********************************")
-            for j in range(5):
+            for j in range(min(5, len(all_CoT_preds))):
                 print("Generated   : %s" % all_CoT_preds[-j])
                 print("Ground truth: %s" % all_CoT_targets[- j])
                 print("------------------------------------------------------")
             print("************************************************************")
 
-        
-
         perfor = results_metrics(predictions, targets)
         performance = str(perfor)
         file_path = os.path.join(self.cfg["work_dir"], "valid_logs")
         mkdir_or_exist(file_path)
-        file_name = os.path.join(file_path, f"valid_performance.txt")  # the first file
-        if os.path.exists(file_name):
-            directory, filename = os.path.split(file_name)
-            name, extension = os.path.splitext(filename)
-            count = 1
-            new_filename = f"{name}({count}).{extension}"
-            while os.path.exists(os.path.join(directory, new_filename)):
-                count += 1
-                new_filename = f"{name}({count}).{extension}"
-            file_name = os.path.join(directory, new_filename)
-
-        with open(file_name, 'w') as file:
+        file_name = os.path.join(file_path, f"valid_performance.txt")
+        with open(file_name, 'w', encoding='utf-8') as file:
             file.write(performance)
-            # file.write(text_metric)
 
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
-
-        CoT_pred, predictions,drug_name1, drug_name2 = self.blip2opt.generate(
+        CoT_pred, predictions, drug_name1, drug_name2 = self.blip2opt.generate(
             batch,
             do_sample=self.do_sample,
             num_beams=self.num_beams,
@@ -186,63 +178,63 @@ class MainModel_Function_CLS(pl.LightningModule):  #
             min_length=self.min_len,
             max_new_tokens=self.max_new_tokens
         )
-        return CoT_pred, predictions, batch[-2], batch[-1],drug_name1, drug_name2
+        out = (CoT_pred, predictions, batch[-2], batch[-1], drug_name1, drug_name2)
+        self.test_step_outputs.append(out)
+        return out
 
+    def on_test_epoch_end(self):
+        outputs = [o for o in self.test_step_outputs if o is not None]
+        self.test_step_outputs = []
+        if len(outputs) > 0:
+            self._shared_test_epoch_end(outputs)
 
     def test_epoch_end(self, outputs):
+        if outputs and len(outputs) > 0:
+            self._shared_test_epoch_end(outputs)
+
+    def _shared_test_epoch_end(self, outputs):
         print("Entering test_epoch_end")
         caption_outputs = outputs
-        # list_predictions, list_targets = zip(*caption_outputs)
         CoT_pred_list, list_predictions, CoT_target_list, list_targets, drug_name1, drug_name2 = zip(*caption_outputs)
-        if CoT_pred_list[0] == None:
-            predictions = [i for ii in list_predictions for i in ii]
-            targets = [i for ii in list_targets for i in ii]
-            drug1 = [i for ii in drug_name1 for i in ii]
-            drug2 = [i for ii in drug_name2 for i in ii]
+        predictions = [i for ii in list_predictions for i in ii]
+        targets = [i for ii in list_targets for i in ii]
+        drug1 = [i for ii in drug_name1 for i in ii]
+        drug2 = [i for ii in drug_name2 for i in ii]
+        CoT_preds = [i for ii in CoT_pred_list for i in ii] if CoT_pred_list[0] is not None else None
+        CoT_targets = [i for ii in CoT_target_list for i in ii] if CoT_target_list[0] is not None else None
+
+        if dist.is_available() and dist.is_initialized() and self.trainer.world_size > 1:
             all_predictions = [None for _ in range(self.trainer.world_size)]
             all_targets = [None for _ in range(self.trainer.world_size)]
-            all_drug1 =[None for _ in range(self.trainer.world_size)]
+            all_drug1 = [None for _ in range(self.trainer.world_size)]
             all_drug2 = [None for _ in range(self.trainer.world_size)]
             dist.all_gather_object(all_predictions, predictions)
             dist.all_gather_object(all_targets, targets)
             dist.all_gather_object(all_drug1, drug1)
             dist.all_gather_object(all_drug2, drug2)
-            if self.global_rank == 0:
-                all_predictions = [i for ii in all_predictions for i in ii]
-                all_targets = [i for ii in all_targets for i in ii]
-                all_drug1s = [i for ii in all_drug1 for i in ii]
-                all_drug2s = [i for ii in all_drug2 for i in ii]
-                self.save_predictions_test(all_predictions, all_targets, all_drug1s, all_drug2s)
-        else:
-            predictions = [i for ii in list_predictions for i in ii]
-            targets = [i for ii in list_targets for i in ii]
-            CoT_preds = [i for ii in CoT_pred_list for i in ii]
-            CoT_targets = [i for ii in CoT_target_list for i in ii]
-            all_predictions = [None for _ in range(self.trainer.world_size)]
-            all_targets = [None for _ in range(self.trainer.world_size)]
-            all_CoT_preds = [None for _ in range(self.trainer.world_size)]
-            all_CoT_targets = [None for _ in range(self.trainer.world_size)]
-            # all_predictions = predictions
-            # all_targets =targets
-            dist.all_gather_object(all_predictions, predictions)
-            dist.all_gather_object(all_targets, targets)
-            dist.all_gather_object(all_CoT_preds, CoT_preds)
-            dist.all_gather_object(all_CoT_targets, CoT_targets)
-            if self.global_rank == 0:
-                all_predictions = [i for ii in all_predictions for i in ii]
-                all_targets = [i for ii in all_targets for i in ii]
-                all_CoT_preds = [i for ii in all_CoT_preds for i in ii]
-                all_CoT_targets = [i for ii in all_CoT_targets for i in ii]
-                # print("all_targets", len(all_targets))
-                self.save_predictions_test(all_predictions, all_targets, all_CoT_preds, all_CoT_targets)
+            predictions = [i for ii in all_predictions for i in ii]
+            targets = [i for ii in all_targets for i in ii]
+            drug1 = [i for ii in all_drug1 for i in ii]
+            drug2 = [i for ii in all_drug2 for i in ii]
+            if CoT_preds is not None:
+                all_CoT_preds = [None for _ in range(self.trainer.world_size)]
+                all_CoT_targets = [None for _ in range(self.trainer.world_size)]
+                dist.all_gather_object(all_CoT_preds, CoT_preds)
+                dist.all_gather_object(all_CoT_targets, CoT_targets)
+                CoT_preds = [i for ii in all_CoT_preds for i in ii]
+                CoT_targets = [i for ii in all_CoT_targets for i in ii]
 
-        
+        if self.global_rank == 0:
+            if CoT_preds is None:
+                self.save_predictions_test(predictions, targets, drug1, drug2)
+            else:
+                self.save_predictions_test(predictions, targets, CoT_preds, CoT_targets)
 
-    def save_predictions_test(self, predictions, targets,  drug_name1, drug_name2):
+    def save_predictions_test(self, predictions, targets, drug_name1, drug_name2):
         assert len(predictions) == len(targets)
 
         print("****************show result*********************")
-        for j in range(5):
+        for j in range(min(5, len(predictions))):
             print("Generated   : %s" % predictions[-j])
             print("Ground truth: %s" % targets[- j])
             print("------------------------------------------------------")
@@ -254,30 +246,53 @@ class MainModel_Function_CLS(pl.LightningModule):  #
         json_dict = {}
         for p, t, d1, d2 in zip(predictions, targets, drug_name1, drug_name2):
             json_dict[d1+"&"+d2]={'prediction': p, 'target': t}
-        with open(os.path.join(file_path, 'predictions.txt'), 'w') as json_file:
+        with open(os.path.join(file_path, 'predictions.txt'), 'w', encoding='utf-8') as json_file:
             json.dump(json_dict, json_file, indent=4)
         
         perform = results_metrics(predictions, targets)
         performance = str(perform)
 
-        with open(os.path.join(file_path, f"test_performance.txt"), 'w') as file:
+        with open(os.path.join(file_path, f"test_performance.txt"), 'w', encoding='utf-8') as file:
             file.write(performance)
 
     def configure_optimizers(self):
-        self.trainer.reset_train_dataloader()
-        warmup_steps = min(len(self.trainer.train_dataloader), self.cfg["warmup_steps"])
-        optimizer = optim.AdamW(self.parameters(), lr=self.cfg["init_lr"], weight_decay=self.cfg["weight_decay"])
-        if self.cfg["scheduler"] == 'linear_warmup_cosine_lr':
-            self.scheduler = LinearWarmupCosineLRScheduler(optimizer, self.cfg["max_epochs"], self.cfg["min_lr"],
-                                                           self.cfg["init_lr"], warmup_steps, self.cfg["warmup_lr"])
-        elif self.cfg["scheduler"] == 'linear_warmup_step_lr':
-            self.scheduler = LinearWarmupStepLRScheduler(optimizer, self.cfg["max_epochs"], self.cfg["min_lr"],
-                                                         self.cfg["init_lr"], self.cfg["lr_decay_rate"],
-                                                         self.cfg["warmup_lr"], warmup_steps)
-        elif self.cfg["scheduler"] == 'None':
+        try:
+            if hasattr(self.trainer, "reset_train_dataloader"):
+                self.trainer.reset_train_dataloader()
+        except Exception:
+            pass
+
+        train_loader_len = 1000
+        try:
+            if hasattr(self.trainer, "train_dataloader") and self.trainer.train_dataloader is not None:
+                train_loader_len = len(self.trainer.train_dataloader)
+            elif hasattr(self.trainer, "train_dataloaders") and self.trainer.train_dataloaders is not None:
+                train_loader_len = len(self.trainer.train_dataloaders)
+        except Exception:
+            pass
+
+        warmup_steps = min(train_loader_len, self.cfg.get("warmup_steps", 1000))
+        optimizer = optim.AdamW(
+            self.parameters(),
+            lr=self.cfg.get("init_lr", 1e-4),
+            weight_decay=self.cfg.get("weight_decay", 0.05)
+        )
+        scheduler_type = self.cfg.get("scheduler", "linear_warmup_cosine_lr")
+        if scheduler_type == 'linear_warmup_cosine_lr' and LinearWarmupCosineLRScheduler is not None:
+            self.scheduler = LinearWarmupCosineLRScheduler(
+                optimizer, self.cfg.get("max_epochs", 30), self.cfg.get("min_lr", 1e-5),
+                self.cfg.get("init_lr", 1e-4), warmup_steps, self.cfg.get("warmup_lr", 1e-6)
+            )
+        elif scheduler_type == 'linear_warmup_step_lr' and LinearWarmupStepLRScheduler is not None:
+            self.scheduler = LinearWarmupStepLRScheduler(
+                optimizer, self.cfg.get("max_epochs", 30), self.cfg.get("min_lr", 1e-5),
+                self.cfg.get("init_lr", 1e-4), self.cfg.get("lr_decay_rate", 0.9),
+                self.cfg.get("warmup_lr", 1e-6), warmup_steps
+            )
+        elif scheduler_type == 'None':
             self.scheduler = None
         else:
-            raise NotImplementedError()
+            self.scheduler = None
         return optimizer
 
     def load_from_stage1_checkpoint(self, path):

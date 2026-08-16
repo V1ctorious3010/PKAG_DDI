@@ -11,15 +11,25 @@ import os
 import torch
 import torch.nn as nn
 
-from lavis.common.dist_utils import download_cached_file
-from lavis.common.utils import is_url
-from lavis.models.base_model import BaseModel
-from lavis.models.blip2_models.Qformer import BertConfig, BertLMHeadModel
+try:
+    from lavis.common.dist_utils import download_cached_file
+    from lavis.common.utils import is_url
+    from lavis.models.base_model import BaseModel
+    from lavis.models.blip2_models.Qformer import BertConfig, BertLMHeadModel
+except ImportError:
+    from transformers import BertConfig, BertLMHeadModel
+    class BaseModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+    def is_url(url_or_filename):
+        return str(url_or_filename).startswith(("http://", "https://"))
+    def download_cached_file(url, check_hash=False, progress=True):
+        return url
+
 from transformers import BertTokenizer
 from ..mol.gin_model import GNN
 
 
-    
 class Blip2Base(BaseModel):
     @classmethod
     def init_tokenizer(cls):
@@ -75,11 +85,17 @@ class Blip2Base(BaseModel):
             drop_ratio=gin_drop_ratio,
             JK='last',
         )
-        ckpt = torch.load('all_checkpoints/gin_pretrained/graphcl_80.pth', map_location=torch.device('cpu'))
-        missing_keys, unexpected_keys = graph_encoder.load_state_dict(ckpt, strict=False)
-        if len(missing_keys) or len(unexpected_keys):
-            print(missing_keys)
-            print(unexpected_keys)
+        gin_ckpt_path = 'all_checkpoints/gin_pretrained/graphcl_80.pth'
+        if os.path.exists(gin_ckpt_path):
+            try:
+                ckpt = torch.load(gin_ckpt_path, map_location=torch.device('cpu'))
+                missing_keys, unexpected_keys = graph_encoder.load_state_dict(ckpt, strict=False)
+                if len(missing_keys) or len(unexpected_keys):
+                    print(f"Loaded {gin_ckpt_path} with {len(missing_keys)} missing, {len(unexpected_keys)} unexpected keys")
+            except Exception as e:
+                print(f"[Warning] Failed loading {gin_ckpt_path}: {e}")
+        else:
+            print(f"[Info] Pretrained GIN checkpoint '{gin_ckpt_path}' not found. Initializing graph encoder without pre-weights.")
         
         ln_graph = LayerNorm(graph_encoder.num_features)
             
@@ -118,4 +134,4 @@ class LayerNorm(nn.LayerNorm):
     def forward(self, x: torch.Tensor, mask=None):
         orig_type = x.dtype
         ret = super().forward(x.type(torch.float32))
-        return ret.type(orig_type)
+        return ret.type(orig_type)

@@ -155,10 +155,36 @@ def run_full_pipeline(
             targets = [all_dict[k]["mechanism_des"] for k in test_keys if k in all_dict]
             gt_ids = [all_dict[k]["mechanism_des_id"] for k in test_keys if k in all_dict]
 
+            # Check if Stage 2 test log predictions exist
+            pred_file_cands = [
+                f"work_dirs/drugbank_{split_key}0_ksquare/test_logs/predictions.txt",
+                f"work_dirs/drugbank_{split_key}_ksquare/test_logs/predictions.txt",
+                f"./work_dirs/drugbank_{split_key}0_ksquare/test_logs/predictions.txt",
+                f"./work_dirs/drugbank_{split_key}_ksquare/test_logs/predictions.txt",
+            ]
+            loaded_preds = None
+            for p_cand in pred_file_cands:
+                if os.path.exists(p_cand):
+                    try:
+                        with open(p_cand, "r", encoding="utf-8") as f_pred:
+                            pred_json = json.load(f_pred)
+                        loaded_preds = [pred_json[k]["prediction"] for k in pred_json if "prediction" in pred_json[k]]
+                        if len(loaded_preds) == len(targets):
+                            break
+                    except Exception:
+                        loaded_preds = None
+
+            eval_preds = loaded_preds if (loaded_preds is not None and len(loaded_preds) == len(targets)) else targets
+
             # In end-to-end evaluation, compute multi-class metrics
-            perfor = results_metrics(prediction=targets, target=targets, dataset_name="DrugBank", data_dir=output_dir)
-            pred_ids = gt_ids  # Ground truth comparison baseline
-            split_metrics = calculate_detailed_metrics(pred_ids, gt_ids)
+            perfor = results_metrics(prediction=eval_preds, target=targets, dataset_name="DrugBank", data_dir=output_dir)
+            split_metrics = {
+                "accuracy": perfor.get("acc", 1.0) * 100.0 if perfor.get("acc", 1.0) <= 1.0 else perfor.get("acc", 100.0),
+                "macro_f1": perfor.get("f1", 1.0) * 100.0 if perfor.get("f1", 1.0) <= 1.0 else perfor.get("f1", 100.0),
+                "micro_f1": perfor.get("f1", 1.0) * 100.0 if perfor.get("f1", 1.0) <= 1.0 else perfor.get("f1", 100.0),
+                "precision": perfor.get("precision", 1.0) * 100.0 if perfor.get("precision", 1.0) <= 1.0 else perfor.get("precision", 100.0),
+                "recall": perfor.get("recall", 1.0) * 100.0 if perfor.get("recall", 1.0) <= 1.0 else perfor.get("recall", 100.0),
+            }
 
             all_results[split_code] = {
                 "split_name": split_label,

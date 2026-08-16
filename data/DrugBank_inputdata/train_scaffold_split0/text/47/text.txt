@@ -1,0 +1,1 @@
+#Drug1 may decrease the cardiotoxic activities of #Drug2.

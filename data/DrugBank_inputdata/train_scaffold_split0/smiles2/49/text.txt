@@ -1,0 +1,1 @@
+CC1=CC(=C(C(=C1OC(=O)C)C)C)OCC(CNC(C)C)O

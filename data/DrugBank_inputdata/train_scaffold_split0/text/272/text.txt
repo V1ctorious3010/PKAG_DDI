@@ -1,0 +1,1 @@
+#Drug1 may increase the analgesic activities of #Drug2.

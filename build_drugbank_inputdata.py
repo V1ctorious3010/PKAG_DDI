@@ -65,9 +65,14 @@ def build_input_data(
     elif split_mode == "scaffold":
         if mode == "train":
             input_file = f"{data_base_dir}/{dataset_name}/scaffold_split/train.txt"
-            output_dir = f"{data_base_dir}/{dataset_name}_inputdata/{mode}_{split_mode}_split{fold}"
-        else:
-            input_file = f"{data_base_dir}/{dataset_name}/scaffold_split/val.txt"
+            output_dir = f"{data_base_dir}/{dataset_name}_inputdata/train_{split_mode}_split{fold}"
+        elif mode == "val":
+            val_file = f"{data_base_dir}/{dataset_name}/scaffold_split/val.txt"
+            input_file = val_file if os.path.exists(val_file) else f"{data_base_dir}/{dataset_name}/scaffold_split/test.txt"
+            output_dir = f"{data_base_dir}/{dataset_name}_inputdata/val_{split_mode}_split{fold}"
+        elif mode == "test":
+            test_file = f"{data_base_dir}/{dataset_name}/scaffold_split/test.txt"
+            input_file = test_file if os.path.exists(test_file) else f"{data_base_dir}/{dataset_name}/scaffold_split/val.txt"
             output_dir = f"{data_base_dir}/{dataset_name}_inputdata/test_{split_mode}_split{fold}"
 
     if not os.path.exists(input_file):

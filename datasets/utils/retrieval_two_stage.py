@@ -111,8 +111,15 @@ class RetrievalTwoStage_addgtfunction(Dataset):
                 function2 = lines[0].strip('\n').strip()
 
 
-        two_drug_name = drug1_name+"&"+drug2_name
-        retrieval_infor = self.twodrug2topk[two_drug_name]
+        two_drug_name = drug1_name + "&" + drug2_name
+        two_drug_name_rev = drug2_name + "&" + drug1_name
+        if two_drug_name in self.twodrug2topk:
+            retrieval_infor = self.twodrug2topk[two_drug_name]
+        elif two_drug_name_rev in self.twodrug2topk:
+            rev_info = self.twodrug2topk[two_drug_name_rev]
+            retrieval_infor = [rev_info[1], rev_info[0], rev_info[3], rev_info[2]]
+        else:
+            retrieval_infor = [[0, 1], [0, 1], np.array([0.5, 0.5]), np.array([0.5, 0.5])]
         drug1_retrieval = retrieval_infor[0][:self.retrieval_number] # first is the function index, second is function prob
         drug2_retrieval = retrieval_infor[1][:self.retrieval_number]
         top_k_score1 = retrieval_infor[2][:self.retrieval_number]
@@ -394,9 +401,15 @@ class RetrievalTwoStage_kchengk(Dataset):
             function2 = lines[0].strip('\n').strip()
 
 
-        two_drug_name = drug1_name+"&"+drug2_name
-        retrieval_infor = self.twodrug2topk[two_drug_name]
-        #print("retrieval_infor",retrieval_infor)
+        two_drug_name = drug1_name + "&" + drug2_name
+        two_drug_name_rev = drug2_name + "&" + drug1_name
+        if two_drug_name in self.twodrug2topk:
+            retrieval_infor = self.twodrug2topk[two_drug_name]
+        elif two_drug_name_rev in self.twodrug2topk:
+            rev_info = self.twodrug2topk[two_drug_name_rev]
+            retrieval_infor = [rev_info[1], rev_info[0], rev_info[3], rev_info[2]]
+        else:
+            retrieval_infor = [[0, 1], [0, 1], np.array([0.5, 0.5]), np.array([0.5, 0.5])]
         drug1_retrieval = retrieval_infor[0][:self.retrieval_number] # first is the function index, second is function prob
         drug2_retrieval = retrieval_infor[1][:self.retrieval_number]
         top_k_score1 = retrieval_infor[2][:self.retrieval_number]

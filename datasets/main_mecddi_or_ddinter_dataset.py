@@ -64,7 +64,7 @@ class MainDataset(LightningDataModule):
                 pin_memory=False,
                 drop_last=True,
                 persistent_workers=True,
-                collate_fn=self.train_dataset.collate_fn)
+                collate_fn=self.pretrain_dataset.collate_fn)
 
         elif self.cfg["mode"] == 'ft':
             print("train_dataloader*********************ft**********************")

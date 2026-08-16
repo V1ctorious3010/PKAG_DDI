@@ -9,16 +9,28 @@ from ogb.utils import smiles2graph
 from torch_geometric.loader.dataloader import Collater
 from torch_geometric.data import Data
 import numpy as np
-from lavis.models.blip2_models.blip2 import (
-    # Blip2Base,
-    disabled_train,
-)
+try:
+    from lavis.models.blip2_models.blip2 import disabled_train
+except ImportError:
+    def disabled_train(self, mode=True):
+        return self
+
 from .utils.blip2 import Blip2Base
 from transformers import AutoTokenizer, AutoModel
 from transformers import OPTForCausalLM
 from torch_geometric.utils import to_dense_batch
 from typing import List, Optional, Tuple, Union
-from easydict import EasyDict
+try:
+    from easydict import EasyDict
+except ImportError:
+    class EasyDict(dict):
+        def __getattr__(self, name):
+            try:
+                return self[name]
+            except KeyError:
+                raise AttributeError(name)
+        def __setattr__(self, name, value):
+            self[name] = value
 # from opendelta import LoraModel
 # from opendelta.delta_models.lora import LoraConfig
 # from opendelta.delta_configs

@@ -1,0 +1,1 @@
+#Drug1 may decrease the antihypertensive activities of #Drug2.

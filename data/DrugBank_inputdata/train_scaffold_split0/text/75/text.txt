@@ -1,0 +1,1 @@
+#Drug1 may increase the anticoagulant activities of #Drug2.

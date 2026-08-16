@@ -1,0 +1,1 @@
+#Drug1 may increase the hypertensive activities of #Drug2.
