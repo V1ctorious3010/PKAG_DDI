@@ -4,7 +4,7 @@ from torch_geometric.loader.dataloader import Collater
 import numpy as np
 import torch
 import re
-from transformers import AutoTokenizer, BioGptModel, AutoModel
+from transformers import AutoTokenizer, AutoModel
 import pickle
 from torch_geometric.data import Batch
 import pandas as pd

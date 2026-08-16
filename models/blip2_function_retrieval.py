@@ -96,6 +96,8 @@ class Blip2OPT_RETRIEVAL(Blip2Base):
         #####################################
         ## initialize opt model
         opt_model = "./all_checkpoints/galactica-1.3b"
+        if not os.path.exists(opt_model):
+            opt_model = cfg.get("opt_model", "facebook/galactica-1.3b") if "cfg" in locals() and isinstance(cfg, dict) else "facebook/galactica-1.3b"
         self.opt_tokenizer = AutoTokenizer.from_pretrained(opt_model, use_fast=False, padding_side='right')
         self.opt_tokenizer.add_special_tokens({'pad_token': '<pad>', 'sep_token': '</s>'})
         self.opt_tokenizer.add_special_tokens({'eos_token': "<EOS>"})
@@ -368,6 +370,8 @@ class Blip2OPT_RETRIEVAL_marginalize(Blip2Base):
         #####################################
         ## initialize opt model
         opt_model = "./all_checkpoints/galactica-1.3b"
+        if not os.path.exists(opt_model):
+            opt_model = cfg.get("opt_model", "facebook/galactica-1.3b") if "cfg" in locals() and isinstance(cfg, dict) else "facebook/galactica-1.3b"
         self.opt_tokenizer = AutoTokenizer.from_pretrained(opt_model, use_fast=False, padding_side='right')
         self.opt_tokenizer.add_special_tokens({'pad_token': '<pad>', 'sep_token': '</s>'})
         self.opt_tokenizer.add_special_tokens({'eos_token': "<EOS>"})

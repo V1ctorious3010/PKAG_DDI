@@ -10,7 +10,7 @@ from tools.logging_ import get_root_logger
 from torch.utils.data import (DataLoader, RandomSampler)
 from torch.optim import Adam, AdamW
 from models.mol.gin_model import GNN
-from transformers import AutoTokenizer, BioGptModel, AutoModel
+from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
 import time
 from torch_geometric.data import Batch

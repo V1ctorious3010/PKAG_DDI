@@ -1,6 +1,6 @@
 import pickle
 from collections import defaultdict
-from transformers import AutoTokenizer, BioGptModel,AutoModel
+from transformers import AutoTokenizer, AutoModel
 def remove_element(lst, target):
     aaa = [x for x in lst if x != target]
     new = ""

@@ -23,7 +23,10 @@ from ..mol.gin_model import GNN
 class Blip2Base(BaseModel):
     @classmethod
     def init_tokenizer(cls):
-        tokenizer = BertTokenizer.from_pretrained('./all_checkpoints/bert_pretrained/')
+        bert_path = './all_checkpoints/bert_pretrained/'
+        if not os.path.exists(bert_path):
+            bert_path = 'allenai/scibert_scivocab_uncased'
+        tokenizer = BertTokenizer.from_pretrained(bert_path)
         tokenizer.add_special_tokens({"bos_token": "[DEC]"})
         return tokenizer
 
@@ -42,7 +45,10 @@ class Blip2Base(BaseModel):
         assert model_name == 'scibert'
         print("bert load scibert")
         
-        encoder_config = BertConfig.from_pretrained('all_checkpoints/bert_pretrained/')
+        bert_path = 'all_checkpoints/bert_pretrained/'
+        if not os.path.exists(bert_path):
+            bert_path = 'allenai/scibert_scivocab_uncased'
+        encoder_config = BertConfig.from_pretrained(bert_path)
         encoder_config.encoder_width = graph_width
         # insert cross-attention layer every other block
         encoder_config.add_cross_attention = True
@@ -50,7 +56,7 @@ class Blip2Base(BaseModel):
         encoder_config.query_length = num_query_token
         
         Qformer = BertLMHeadModel.from_pretrained(
-            "all_checkpoints/bert_pretrained/", config=encoder_config
+            bert_path, config=encoder_config
         )
         query_tokens = nn.Parameter(
             torch.zeros(1, num_query_token, encoder_config.hidden_size)

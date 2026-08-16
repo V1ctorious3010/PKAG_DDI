@@ -67,8 +67,13 @@ def main(args):
     # Get model
     if args.mode == "ft":
         model = build_model(args, cfg["model"])
-        ckpt = torch.load(cfg["init_checkpoint"], map_location='cpu')
-        model.load_state_dict(ckpt['state_dict'], strict=False)
+        init_ckpt = cfg.get("init_checkpoint", "")
+        if init_ckpt and os.path.exists(init_ckpt):
+            ckpt = torch.load(init_ckpt, map_location='cpu')
+            model.load_state_dict(ckpt['state_dict'], strict=False)
+            print(f"Loaded init checkpoint from {init_ckpt}")
+        else:
+            print(f"init_checkpoint '{init_ckpt}' not found. Training without pre-trained Stage 2 checkpoint.")
         print('total params:', sum(p.numel() for p in model.parameters()))
     elif args.mode == "breakpoint":
         print("breakpoint")
@@ -92,7 +97,10 @@ def main(args):
     datasets = build_dataset(cfg["dataset"], args, tokenizer)
 
     # multi device  Parallel  strategy
-    if len(args.devices.split(',')) > 1:
+    num_available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    device_list = [int(d) for d in str(args.devices).split(',') if d.strip().isdigit()]
+    
+    if num_available_gpus > 1 and len(device_list) > 1:
         if args.strategy_name == 'fsdp':
             strategy = strategies.DDPFullyShardedNativeStrategy()
         elif args.strategy_name == 'deepspeed':
@@ -100,11 +108,10 @@ def main(args):
         else:
             strategy = MyDDPSpawnStrategy(find_unused_parameters=False)
     else:
-        print("oooooooooooooooooooooooooonly one gpu")
+        print("Single GPU or CPU mode")
         strategy = None
-        # args.devices = eval(args.devices)
-        args.devices = [0]
-        # args.devices = torch.device("cuda:0")
+        args.devices = [0] if num_available_gpus > 0 else 0
+        args.accelerator = "gpu" if num_available_gpus > 0 else "cpu"
 
     # start to train
     if args.mode in {'pretrain', 'ft'}:
