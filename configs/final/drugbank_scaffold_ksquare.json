@@ -12,7 +12,7 @@
   "dataset": {
     "name": "mecddi_or_ddinter",
     "prompt_model": "retrieval_paircheng",
-    "batch_size": 4,
+    "batch_size": 2,
     "inference_batch_size": 4,
     "retrieval_function_number": 2,
     "num_workers": 2,
@@ -27,7 +27,7 @@
   },
   "model": {
     "name": "Function_cls",
-    "batch_size": 4,
+    "batch_size": 2,
     "retrieval_function_number": 2,
     "stage": "marginalize",
     "DDI": true,
@@ -53,12 +53,13 @@
     "lora_alpha": 32,
     "lora_dropout": 0.1,
     "warmup_steps": 1000,
-    "init_lr": 1e-4,
+    "init_lr": 0.0001,
     "weight_decay": 0.05,
     "scheduler": "linear_warmup_cosine_lr",
     "max_epochs": 30,
-    "min_lr": 1e-5,
-    "warmup_lr": 1e-6,
+    "min_lr": 1e-05,
+    "warmup_lr": 1e-06,
     "lr_decay_rate": 0.9
-  }
+  },
+  "accumulate_grad_batches": 2
 }

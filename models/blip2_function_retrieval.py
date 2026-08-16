@@ -495,7 +495,6 @@ class Blip2OPT_RETRIEVAL_marginalize(Blip2Base):
             inputs_embeds=input_embeddings111,
             attention_mask=attention_mask111,
             return_dict=True,
-            labels=targets1,
         )
 
         logits = outputs1.logits  

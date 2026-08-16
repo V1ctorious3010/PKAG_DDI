@@ -15,6 +15,7 @@ from models.builder import build_model
 from utils import mkdir_or_exist
 
 os.environ['OPENBLAS_NUM_THREADS'] = '0'
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 torch.set_float32_matmul_precision('medium')  # can be medium (bfloat16), high (tensorfloat32), highest (float32)
 
@@ -33,6 +34,8 @@ def parse_args():
     parser.add_argument('--peft_config', type=str, default=None)
     parser.add_argument('--accelerator', type=str, default='gpu')
     parser.add_argument('--precision', type=str, default='bf16')
+    parser.add_argument('--batch_size', type=int, default=None, help='Override batch size in config')
+    parser.add_argument('--accumulate_grad_batches', type=int, default=None, help='Gradient accumulation steps')
 
     args = parser.parse_args()
 
@@ -43,6 +46,13 @@ def main(args):
     pl.seed_everything(args.seednumber)  # set seed
     args = parse_args()  # get args
     cfg = json.load(open(args.config))  # get cfg from file
+
+    if args.batch_size is not None:
+        cfg["dataset"]["batch_size"] = args.batch_size
+        cfg["model"]["batch_size"] = args.batch_size
+        print(f"[Config] Overriding batch_size to {args.batch_size}")
+
+    accumulate_grad_batches = args.accumulate_grad_batches or cfg.get("accumulate_grad_batches", 1)
 
     # Create output file
     work_dir = os.path.join('work_dirs', osp.splitext(osp.basename(args.config))[0])
@@ -142,6 +152,7 @@ def main(args):
             strategy=strategy,
             logger=logger,
             precision=precision,
+            accumulate_grad_batches=accumulate_grad_batches,
         )
         trainer.fit(model, datamodule=datasets)
     elif args.mode == "breakpoint":
@@ -153,6 +164,7 @@ def main(args):
             strategy=strategy,
             logger=logger,
             precision=precision,
+            accumulate_grad_batches=accumulate_grad_batches,
         )
         trainer.fit(model, datamodule=datasets, ckpt_path=args.breakpoint_file if args.breakpoint_file else None)
     elif args.mode == 'eval':
