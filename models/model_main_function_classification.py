@@ -108,15 +108,15 @@ class MainModel_Function_CLS(pl.LightningModule):  #
         return out
 
     def on_validation_epoch_end(self):
+        if hasattr(self, 'trainer') and getattr(self.trainer, 'sanity_checking', False):
+            self.validation_step_outputs = []
+            return
+
         outputs = [o for o in self.validation_step_outputs if o is not None]
         self.validation_step_outputs = []
-        if len(outputs) > 0 and self.current_epoch != 0:
+        if len(outputs) > 0:
             if (self.current_epoch + 1) % self.caption_eval_epoch == 0:
                 self._shared_val_epoch_end(outputs)
-
-    def validation_epoch_end(self, outputs):
-        if outputs and len(outputs) > 0:
-            self._shared_val_epoch_end(outputs)
 
     def _shared_val_epoch_end(self, outputs):
         caption_outputs = outputs
@@ -186,10 +186,6 @@ class MainModel_Function_CLS(pl.LightningModule):  #
         outputs = [o for o in self.test_step_outputs if o is not None]
         self.test_step_outputs = []
         if len(outputs) > 0:
-            self._shared_test_epoch_end(outputs)
-
-    def test_epoch_end(self, outputs):
-        if outputs and len(outputs) > 0:
             self._shared_test_epoch_end(outputs)
 
     def _shared_test_epoch_end(self, outputs):
